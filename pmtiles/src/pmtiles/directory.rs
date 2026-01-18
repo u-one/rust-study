@@ -82,7 +82,7 @@ impl Directory {
             let tile_id_value = last_tile_id + delta_encoded_tileids[i];
 
             let current_raw_offset = offsets[i];
-            let actual_offset = if i > 0 && current_raw_offset == 0 {
+            let actual_offset = if current_raw_offset == 0 && i > 0 {
                 last_offset + last_length
             } else {
                 current_raw_offset.saturating_sub(1)
@@ -122,25 +122,25 @@ fn read_varints(buffer: &[u8], count: u64) -> Result<(Vec<u64>, usize), &'static
 mod tests {
     use super::*;
 
-    const DIR_DATA: [u8; 13] = [
-        0x03, // Number of entries: 3
-        0x01, 0x02, 0x03, // Delta-encoded Tile IDs
-        0x00, 0x01, 0x00, // Run Lengths
-        0x0A, 0x14, 0x1E, // Lengths
-        0x00, 0x00, 0x01, // Offsets
+    const DIR_DATA: [u8; 17] = [
+        0x04, // Number of entries: 3
+        0x01, 0x02, 0x03, 0x04, // Delta-encoded Tile IDs
+        0x00, 0x01, 0x00, 0x00, // Run Lengths
+        10, 20, 30, 40, // Lengths
+        11, 0, 51, 1 // Offsets
     ]; 
 
     #[test]
     fn test_parse_directory() {
         let directory = Directory::parse(&DIR_DATA).expect("should parse directory data");
-        assert_eq!(directory.entries.len(), 3);
+        assert_eq!(directory.entries.len(), 4);
 
         assert_eq!(directory.entries[0], DirectoryEntry {
             delta_encoded_tileid: 1,
             tileid: TileId::new(1),
             run_length: 0,
             length: 10,
-            offset: 0,
+            offset: 10,
         });
 
         assert_eq!(directory.entries[1], DirectoryEntry {
@@ -148,7 +148,7 @@ mod tests {
             tileid: TileId::new(3),
             run_length: 1,
             length: 20,
-            offset: 0,
+            offset: 20,
         });
 
         assert_eq!(directory.entries[2], DirectoryEntry {
@@ -156,7 +156,15 @@ mod tests {
             tileid: TileId::new(6),
             run_length: 0,
             length: 30,
-            offset: 1,
+            offset: 50,
+        });
+
+        assert_eq!(directory.entries[3], DirectoryEntry {
+            delta_encoded_tileid: 4,
+            tileid: TileId::new(10),
+            run_length: 0,
+            length: 40,
+            offset: 0,
         });
 
 
