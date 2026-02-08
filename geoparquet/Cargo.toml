@@ -1,0 +1,8 @@
+[package]
+name = "geoparquet"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+parquet = "57.2.0"
+geoparquet = "0.7.0"
