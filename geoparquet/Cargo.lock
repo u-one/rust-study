@@ -462,6 +462,8 @@ version = "0.1.0"
 dependencies = [
  "geoparquet 0.7.0",
  "parquet",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

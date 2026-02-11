@@ -1,8 +1,10 @@
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::data_type::ByteArray;
 use parquet::file::reader::{FileReader, SerializedFileReader};
 use std::fs::File;
 use std::error::Error;
-use geoparquet::reader::{GeoParquetReaderBuilder, GeoParquetRecordBatchReader};
+use geoparquet::reader::{GeoParquetReaderBuilder};
+use serde_json::Value;
 
 fn main() -> Result<(), Box<dyn Error>> {
 
@@ -48,6 +50,21 @@ fn read_with_parquet_rs() -> Result<(), Box<dyn Error>> {
     // and column metadata that validates against the GeoParquet metadata schema.
     let geo_json = geo.value.as_ref().unwrap();
     println!("GeoParquet Geo Metadata: {}", geo_json);
+
+    let value = serde_json::from_str::<Value>(geo_json);
+    println!("GeoParquet Geo Metadata (parsed): {:?}", value);
+
+    for i in 0..reader.num_row_groups() {
+        let rg = reader.get_row_group(i)?;
+        println!("Row Group {}: ", i);
+        println!("  Columns:");
+        for j in 0..rg.num_columns() {
+            let col = rg.get_column_reader(j)?;
+            println!("    Column Descriptor: {:?}", col.try_into());
+        }
+    }
+
+
 
     //metadata.row_groups().iter().enumerate().for_each(|(i, rg)| {
     //    println!("Row Group {}: ", i);
