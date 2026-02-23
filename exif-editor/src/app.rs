@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
 
 use crate::exif::reader::{read_exif, read_file_timestamps, scan_jpg_files};
 use crate::exif::types::JpgFileEntry;
@@ -43,6 +45,13 @@ fn setup_japanese_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
+// バックグラウンド読み込みの結果
+struct PreviewResult {
+    path: PathBuf,
+    pixels: Vec<u8>,
+    size: [usize; 2],
+}
+
 pub struct ExifEditorApp {
     files: Vec<JpgFileEntry>,
     selected_index: Option<usize>,
@@ -51,6 +60,9 @@ pub struct ExifEditorApp {
     current_folder: Option<std::path::PathBuf>,
     preview_texture: Option<egui::TextureHandle>,
     preview_path: Option<PathBuf>,
+    // バックグラウンド読み込み用
+    preview_receiver: Option<Receiver<PreviewResult>>,
+    preview_loading: Option<PathBuf>,
 }
 
 impl Default for ExifEditorApp {
@@ -63,6 +75,8 @@ impl Default for ExifEditorApp {
             current_folder: None,
             preview_texture: None,
             preview_path: None,
+            preview_receiver: None,
+            preview_loading: None,
         }
     }
 }
@@ -73,34 +87,69 @@ impl ExifEditorApp {
         Self::default()
     }
 
-    fn load_preview(&mut self, ctx: &egui::Context, path: &PathBuf) {
-        if self.preview_path.as_ref() == Some(path) {
-            return; // 既にロード済み
+    fn start_preview_load(&mut self, path: PathBuf, ctx: &egui::Context) {
+        // 既に同じパスを読み込み中または読み込み済みならスキップ
+        if self.preview_path.as_ref() == Some(&path) {
+            return;
+        }
+        if self.preview_loading.as_ref() == Some(&path) {
+            return;
         }
 
+        // 前のテクスチャをクリア（ローディング表示のため）
         self.preview_texture = None;
         self.preview_path = None;
 
-        if let Ok(img) = image::open(path) {
-            let rgba = img.to_rgba8();
-            let size = [rgba.width() as usize, rgba.height() as usize];
-            let pixels = rgba.into_raw();
+        // 新しい読み込みを開始
+        let (tx, rx) = mpsc::channel();
+        self.preview_receiver = Some(rx);
+        self.preview_loading = Some(path.clone());
 
-            let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-            let texture = ctx.load_texture(
-                "preview",
-                color_image,
-                egui::TextureOptions::LINEAR,
-            );
+        // 再描画をリクエストするためのコンテキスト
+        let ctx_clone = ctx.clone();
 
-            self.preview_texture = Some(texture);
-            self.preview_path = Some(path.clone());
+        thread::spawn(move || {
+            if let Ok(img) = image::open(&path) {
+                // プレビュー用にリサイズ（最大800px）
+                let img = img.thumbnail(800, 800);
+                let rgba = img.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                let pixels = rgba.into_raw();
+
+                let _ = tx.send(PreviewResult { path, pixels, size });
+                // 読み込み完了を通知して再描画
+                ctx_clone.request_repaint();
+            }
+        });
+    }
+
+    fn check_preview_loaded(&mut self, ctx: &egui::Context) {
+        if let Some(receiver) = &self.preview_receiver {
+            if let Ok(result) = receiver.try_recv() {
+                // テクスチャを作成
+                let color_image =
+                    egui::ColorImage::from_rgba_unmultiplied(result.size, &result.pixels);
+                let texture = ctx.load_texture(
+                    "preview",
+                    color_image,
+                    egui::TextureOptions::LINEAR,
+                );
+
+                self.preview_texture = Some(texture);
+                self.preview_path = Some(result.path);
+                self.preview_receiver = None;
+                self.preview_loading = None;
+            }
         }
     }
 
     fn load_folder(&mut self, path: std::path::PathBuf) {
         self.files.clear();
         self.selected_index = None;
+        self.preview_texture = None;
+        self.preview_path = None;
+        self.preview_receiver = None;
+        self.preview_loading = None;
 
         let jpg_paths = scan_jpg_files(&path);
 
@@ -166,6 +215,9 @@ impl ExifEditorApp {
 
 impl eframe::App for ExifEditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // バックグラウンド読み込みの結果をチェック
+        self.check_preview_loaded(ctx);
+
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
             let action = show_toolbar(ui, self.has_modified_files());
 
@@ -197,13 +249,15 @@ impl eframe::App for ExifEditorApp {
             .and_then(|idx| self.files.get(idx))
             .map(|e| e.path.clone());
 
-        // プレビュー画像をロード
-        if let Some(path) = &selected_path {
-            self.load_preview(ctx, path);
+        // プレビュー画像の読み込みを開始
+        if let Some(path) = selected_path {
+            self.start_preview_load(path, ctx);
         } else {
             self.preview_texture = None;
             self.preview_path = None;
         }
+
+        let is_loading = self.preview_loading.is_some();
 
         egui::SidePanel::right("preview_panel")
             .default_width(300.0)
@@ -223,8 +277,11 @@ impl eframe::App for ExifEditorApp {
                     let display_size = tex_size * scale;
 
                     ui.image((texture.id(), display_size));
-                } else if self.selected_index.is_some() {
+                } else if is_loading {
+                    ui.spinner();
                     ui.label("読み込み中...");
+                } else if self.selected_index.is_some() {
+                    ui.label("プレビューなし");
                 } else {
                     ui.label("ファイルを選択してください");
                 }
