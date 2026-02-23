@@ -1,0 +1,13 @@
+[package]
+name = "exif-editor"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.30"
+egui = "0.30"
+egui_extras = "0.30"
+little_exif = "0.6"
+rfd = "0.15"
+chrono = "0.4"
+image = "0.25"
